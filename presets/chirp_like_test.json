@@ -1,0 +1,20 @@
+{
+  "globals": { "fs": 4000, "chunk_size": 512, "view_window_sec": 4.0, "scalogram_fps": 10 },
+  "wavelet": {
+    "plugin_id": "builtin:cwt_morlet",
+    "params": {
+      "wavelet": "morl",
+      "f_min": 5.0,
+      "f_max": 1200.0,
+      "n_freqs": 96,
+      "freq_spacing": "linear",
+      "magnitude": "power",
+      "normalize": "max"
+    }
+  },
+  "components": [
+    { "type": "noise", "name": "Noise (Gaussian)", "enabled": true, "params": { "mean": 0.0, "sigma": 0.03, "seed": 0 } },
+    { "type": "chirp", "name": "Chirp (linear sweep burst)", "enabled": true, "params": { "amplitude": 0.9, "f0": 20.0, "f1": 800.0, "duration_sec": 2.5, "start_time_sec": 0.4 } },
+    { "type": "sine", "name": "Sine", "enabled": true, "params": { "amplitude": 0.25, "frequency": 60.0, "phase": 0.0, "dc": 0.0, "smooth_ms": 200 } }
+  ]
+}

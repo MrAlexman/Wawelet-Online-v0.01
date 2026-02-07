@@ -1,0 +1,20 @@
+{
+  "globals": { "fs": 2000, "chunk_size": 256, "view_window_sec": 4.0, "scalogram_fps": 8 },
+  "wavelet": {
+    "plugin_id": "builtin:cwt_morlet",
+    "params": {
+      "wavelet": "morl",
+      "f_min": 1.0,
+      "f_max": 250.0,
+      "n_freqs": 64,
+      "freq_spacing": "linear",
+      "magnitude": "abs",
+      "normalize": "none"
+    }
+  },
+  "components": [
+    { "type": "noise", "name": "Noise (Gaussian)", "enabled": true, "params": { "mean": 0.0, "sigma": 0.15, "seed": 0 } },
+    { "type": "sine", "name": "Sine", "enabled": true, "params": { "amplitude": 1.0, "frequency": 6.0, "phase": 0.0, "dc": 0.0, "smooth_ms": 150 } },
+    { "type": "sine", "name": "Sine", "enabled": true, "params": { "amplitude": 0.4, "frequency": 30.0, "phase": 0.0, "dc": 0.0, "smooth_ms": 150 } }
+  ]
+}

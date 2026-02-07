@@ -1,0 +1,9 @@
+{
+  "globals": { "fs": 2000, "chunk_size": 256, "view_window_sec": 5.0, "scalogram_fps": 8 },
+  "wavelet": { "plugin_id": "builtin:dwt_wpt", "params": { "mode": "WPT", "wavelet": "db4", "maxlevel": 6, "show_approx": false, "wpt_level": 4, "wpt_nodes": "", "wpt_select": "top_energy", "top_k": 10, "magnitude": "abs", "normalize": "max" } },
+  "components": [
+    { "type": "noise", "name": "Noise (Gaussian)", "enabled": true, "params": { "mean": 0.0, "sigma": 0.05, "seed": 0 } },
+    { "type": "rect_pulse", "name": "Rectangular Pulse Train", "enabled": true, "params": { "amplitude": 1.2, "width_sec": 0.01, "period_sec": 0.25, "start_time_sec": 0.0 } },
+    { "type": "gauss_pulse", "name": "Gaussian Pulses", "enabled": true, "params": { "amplitude": 1.0, "sigma_sec": 0.008, "center_time_sec": 0.8, "repetition_period_sec": 0.9 } }
+  ]
+}
