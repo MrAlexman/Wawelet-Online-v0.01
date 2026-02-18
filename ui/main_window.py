@@ -32,6 +32,7 @@ from core.ring_buffer import RingBuffer
 from core.realtime_clock import RealtimeClock
 from core.plugin_manager import PluginManager
 from core.params_model import ParamsModel
+from inputs.serial_worker import SerialWorker
 
 # --- signal generation ---
 from signal.signal_engine import SignalEngine
@@ -62,9 +63,10 @@ class GeneratorWorker(QObject):
     started = Signal()
     stopped = Signal()
 
-    def __init__(self, engine):
+    def __init__(self, engine, params):
         super().__init__()
         self.engine = engine
+        self.params = params
         self._running = False
 
     @Slot()
@@ -73,6 +75,15 @@ class GeneratorWorker(QObject):
         self.started.emit()
 
         while self._running:
+            snap = self.params.snapshot()
+            if str(snap.get("input_source", "generator")) != "generator":
+                time.sleep(0.05)
+                continue
+
+            if bool(snap.get("paused", True)):
+                time.sleep(0.05)
+                continue
+
             fs, n = self.engine.get_global()
             dt = max(0.001, n / fs)
 
@@ -169,6 +180,16 @@ class MainWindow(QMainWindow):
             "wavelet_plugin_id": "builtin:cwt_morlet",
             "wavelet_params": {},   # filled after plugin selection
             "scalogram_fps": 8,
+            "input_source": "generator",
+            "paused": True,
+            "serial_port": "",
+            "serial_baudrate": 310680,
+            "serial_bytesize": 8,
+            "serial_parity": "N",
+            "serial_stopbits": 1.0,
+            "serial_timeout": 0.01,
+            "serial_format": "int16_le",
+            "serial_scale": 1.0,
         })
 
         self.ring = RingBuffer(capacity=int(self.params.get("fs") * 60))  # keep 60 sec history (high‑freq)
@@ -189,6 +210,7 @@ class MainWindow(QMainWindow):
         self._paused = True
         self._latest_chunk = np.zeros(0, dtype=np.float32)
         self._latest_fs = float(self.params.get("fs", 2000.0))
+        self._latest_t0 = 0.0
 
         self._last_wavelet = None
 
@@ -403,6 +425,74 @@ class MainWindow(QMainWindow):
         g_row.addWidget(self.spin_window)
         right.addLayout(g_row)
 
+        right.addWidget(QLabel("Источник входа"))
+        src_row = QHBoxLayout()
+        self.combo_input_source = QComboBox()
+        self.combo_input_source.addItem("Генератор", userData="generator")
+        self.combo_input_source.addItem("COM (Serial)", userData="serial")
+        src_val = str(self.params.get("input_source", "generator"))
+        self.combo_input_source.setCurrentIndex(0 if src_val == "generator" else 1)
+        self.combo_input_source.installEventFilter(self._no_wheel_filter)
+        self.combo_input_source.setFocusPolicy(Qt.StrongFocus)
+        src_row.addWidget(QLabel("Режим"))
+        src_row.addWidget(self.combo_input_source)
+        right.addLayout(src_row)
+
+        right.addWidget(QLabel("Serial (COM)"))
+        ser1 = QHBoxLayout()
+        self.combo_serial_port = QComboBox()
+        self.combo_serial_port.setEditable(True)
+        self.btn_serial_refresh = QPushButton("Обновить")
+        self.spin_serial_baud = QSpinBox()
+        self.spin_serial_baud.setRange(1, 5_000_000)
+        self.spin_serial_baud.setValue(int(self.params.get("serial_baudrate", 310680)))
+        ser1.addWidget(QLabel("Порт"))
+        ser1.addWidget(self.combo_serial_port, 1)
+        ser1.addWidget(self.btn_serial_refresh)
+        ser1.addWidget(QLabel("baud"))
+        ser1.addWidget(self.spin_serial_baud)
+        right.addLayout(ser1)
+
+        ser2 = QHBoxLayout()
+        self.combo_serial_bytesize = QComboBox()
+        for v in [5, 6, 7, 8]:
+            self.combo_serial_bytesize.addItem(str(v), userData=v)
+        self.combo_serial_parity = QComboBox()
+        for v in ["N", "E", "O", "M", "S"]:
+            self.combo_serial_parity.addItem(v, userData=v)
+        self.combo_serial_stopbits = QComboBox()
+        self.combo_serial_stopbits.addItem("1", userData=1.0)
+        self.combo_serial_stopbits.addItem("1.5", userData=1.5)
+        self.combo_serial_stopbits.addItem("2", userData=2.0)
+        self.spin_serial_timeout = QDoubleSpinBox()
+        self.spin_serial_timeout.setRange(0.0, 2.0)
+        self.spin_serial_timeout.setDecimals(3)
+        self.spin_serial_timeout.setSingleStep(0.005)
+        self.spin_serial_timeout.setValue(float(self.params.get("serial_timeout", 0.01)))
+        ser2.addWidget(QLabel("bytesize"))
+        ser2.addWidget(self.combo_serial_bytesize)
+        ser2.addWidget(QLabel("parity"))
+        ser2.addWidget(self.combo_serial_parity)
+        ser2.addWidget(QLabel("stopbits"))
+        ser2.addWidget(self.combo_serial_stopbits)
+        ser2.addWidget(QLabel("timeout"))
+        ser2.addWidget(self.spin_serial_timeout)
+        right.addLayout(ser2)
+
+        ser3 = QHBoxLayout()
+        self.combo_serial_format = QComboBox()
+        self.combo_serial_format.addItem("int16_le", userData="int16_le")
+        self.spin_serial_scale = QDoubleSpinBox()
+        self.spin_serial_scale.setRange(1e-9, 1e9)
+        self.spin_serial_scale.setDecimals(6)
+        self.spin_serial_scale.setSingleStep(0.01)
+        self.spin_serial_scale.setValue(float(self.params.get("serial_scale", 1.0)))
+        ser3.addWidget(QLabel("format"))
+        ser3.addWidget(self.combo_serial_format)
+        ser3.addWidget(QLabel("scale"))
+        ser3.addWidget(self.spin_serial_scale)
+        right.addLayout(ser3)
+
         fps_row = QHBoxLayout()
         self.spin_sfps = QSpinBox()
         self.spin_sfps.setRange(1, 120)
@@ -589,6 +679,16 @@ class MainWindow(QMainWindow):
         self.spin_chunk.valueChanged.connect(self.on_global_changed)
         self.spin_window.valueChanged.connect(self.on_global_changed)
         self.spin_sfps.valueChanged.connect(self.on_scalo_fps_changed)
+        self.combo_input_source.currentIndexChanged.connect(self.on_input_source_changed)
+        self.btn_serial_refresh.clicked.connect(self.on_serial_refresh_ports)
+        self.combo_serial_port.currentTextChanged.connect(self.on_serial_settings_changed)
+        self.spin_serial_baud.valueChanged.connect(self.on_serial_settings_changed)
+        self.combo_serial_bytesize.currentIndexChanged.connect(self.on_serial_settings_changed)
+        self.combo_serial_parity.currentIndexChanged.connect(self.on_serial_settings_changed)
+        self.combo_serial_stopbits.currentIndexChanged.connect(self.on_serial_settings_changed)
+        self.spin_serial_timeout.valueChanged.connect(self.on_serial_settings_changed)
+        self.combo_serial_format.currentIndexChanged.connect(self.on_serial_settings_changed)
+        self.spin_serial_scale.valueChanged.connect(self.on_serial_settings_changed)
 
         self.btn_add_noise.clicked.connect(lambda: self.on_add_component("noise"))
         self.btn_add_sine.clicked.connect(lambda: self.on_add_component("sine"))
@@ -602,6 +702,8 @@ class MainWindow(QMainWindow):
         self.btn_export_png.clicked.connect(self.on_export_png)
 
         self._fill_wavelet_combo()
+        self._fill_serial_ports()
+        self._sync_serial_controls_from_params()
 
         self.combo_wavelet.currentIndexChanged.connect(self.on_wavelet_changed)
 
@@ -612,6 +714,63 @@ class MainWindow(QMainWindow):
         self.scalo_plot.getViewBox().sigRangeChanged.connect(lambda *_: self._refresh_scalo_y_ticks())
 
 
+    def _fill_serial_ports(self):
+        current = str(self.params.get("serial_port", ""))
+        ports = SerialWorker.available_ports()
+        self.combo_serial_port.blockSignals(True)
+        self.combo_serial_port.clear()
+        for p in ports:
+            self.combo_serial_port.addItem(p)
+        if current:
+            if self.combo_serial_port.findText(current) < 0:
+                self.combo_serial_port.addItem(current)
+            self.combo_serial_port.setCurrentText(current)
+        self.combo_serial_port.blockSignals(False)
+
+    def _sync_serial_controls_from_params(self):
+        b = int(self.params.get("serial_bytesize", 8))
+        p = str(self.params.get("serial_parity", "N"))
+        sb = float(self.params.get("serial_stopbits", 1.0))
+        fmt = str(self.params.get("serial_format", "int16_le"))
+
+        self.spin_serial_baud.setValue(int(self.params.get("serial_baudrate", 310680)))
+        self.spin_serial_timeout.setValue(float(self.params.get("serial_timeout", 0.01)))
+        self.spin_serial_scale.setValue(float(self.params.get("serial_scale", 1.0)))
+
+        idx_b = self.combo_serial_bytesize.findData(b)
+        if idx_b >= 0:
+            self.combo_serial_bytesize.setCurrentIndex(idx_b)
+        idx_p = self.combo_serial_parity.findData(p)
+        if idx_p >= 0:
+            self.combo_serial_parity.setCurrentIndex(idx_p)
+        idx_sb = self.combo_serial_stopbits.findData(sb)
+        if idx_sb >= 0:
+            self.combo_serial_stopbits.setCurrentIndex(idx_sb)
+        idx_fmt = self.combo_serial_format.findData(fmt)
+        if idx_fmt >= 0:
+            self.combo_serial_format.setCurrentIndex(idx_fmt)
+
+    @Slot()
+    def on_serial_refresh_ports(self):
+        self._fill_serial_ports()
+        self.statusbar.showMessage("Serial: список портов обновлён", 1200)
+
+    @Slot()
+    def on_serial_settings_changed(self, *_):
+        self.params.set("serial_port", str(self.combo_serial_port.currentText()).strip())
+        self.params.set("serial_baudrate", int(self.spin_serial_baud.value()))
+        self.params.set("serial_bytesize", int(self.combo_serial_bytesize.currentData()))
+        self.params.set("serial_parity", str(self.combo_serial_parity.currentData()))
+        self.params.set("serial_stopbits", float(self.combo_serial_stopbits.currentData()))
+        self.params.set("serial_timeout", float(self.spin_serial_timeout.value()))
+        self.params.set("serial_format", str(self.combo_serial_format.currentData()))
+        self.params.set("serial_scale", float(self.spin_serial_scale.value()))
+
+    @Slot()
+    def on_input_source_changed(self, *_):
+        src = str(self.combo_input_source.currentData())
+        self.params.set("input_source", src)
+        self.statusbar.showMessage(f"Источник входа: {src}", 1200)
 
 
     def _fill_wavelet_combo(self):
@@ -666,12 +825,22 @@ class MainWindow(QMainWindow):
     def _wire_threads(self):
         # Generator thread
         self.gen_thread = QThread(self)
-        self.gen_worker = GeneratorWorker(self.engine)
+        self.gen_worker = GeneratorWorker(self.engine, self.params)
         self.gen_worker.moveToThread(self.gen_thread)
 
         # ВАЖНО: запускаем worker.start() когда поток стартует
         self.gen_thread.started.connect(self.gen_worker.start)
         self.gen_worker.chunk_ready.connect(self.on_chunk)
+
+
+        # Serial thread
+        self.serial_thread = QThread(self)
+        self.serial_worker = SerialWorker(self.params)
+        self.serial_worker.moveToThread(self.serial_thread)
+
+        self.serial_thread.started.connect(self.serial_worker.start)
+        self.serial_worker.chunk_ready.connect(self.on_chunk)
+        self.serial_worker.status.connect(self.statusbar.showMessage)
 
         # Wavelet thread
         self.wav_thread = QThread(self)
@@ -683,11 +852,13 @@ class MainWindow(QMainWindow):
         self.wav_worker.status.connect(self.statusbar.showMessage)
 
         self.gen_thread.start()
+        self.serial_thread.start()
         self.wav_thread.start()
 
         # initially paused
         self.engine.pause()
         self._paused = True
+        self.params.set("paused", True)
 
 
     # ---------- Slots ----------
@@ -696,10 +867,14 @@ class MainWindow(QMainWindow):
         self._ui_timer.stop()
         self.gen_worker.stop()
         self.wav_worker.stop()
+        self.serial_worker.stop()
         self.gen_thread.quit()
+        self.serial_thread.quit()
         self.wav_thread.quit()
         if not self.gen_thread.wait(3000):
             log.warning("Generator thread did not finish in time")
+        if not self.serial_thread.wait(3000):
+            log.warning("Serial thread did not finish in time")
         if not self.wav_thread.wait(3000):
             log.warning("Wavelet thread did not finish in time")
         event.accept()
@@ -716,6 +891,7 @@ class MainWindow(QMainWindow):
         self.engine.play()
         self._paused = False
         self.btn_play.setText("ПАУЗА")
+        self.params.set("paused", False)
 
     @Slot()
     def on_play_pause(self):
@@ -723,11 +899,13 @@ class MainWindow(QMainWindow):
             self.engine.play()
             self._paused = False
             self.btn_play.setText("ПАУЗА")
+            self.params.set("paused", False)
             self.statusbar.showMessage("ПУСК", 1500)
         else:
             self.engine.pause()
             self._paused = True
             self.btn_play.setText("ПУСК")
+            self.params.set("paused", True)
             self.statusbar.showMessage("ПАУЗА", 1500)
 
     @Slot()
@@ -787,6 +965,7 @@ class MainWindow(QMainWindow):
     def on_chunk(self, x, t0, fs):
         self._latest_chunk = np.asarray(x, dtype=np.float32)
         self._latest_fs = float(fs)
+        self._latest_t0 = float(t0)
         self.ring.append(self._latest_chunk)
 
     @Slot(object)
@@ -1119,10 +1298,21 @@ class MainWindow(QMainWindow):
                 "chunk_size": int(self.params.get("chunk_size")),
                 "view_window_sec": float(self.params.get("view_window_sec")),
                 "scalogram_fps": int(self.params.get("scalogram_fps")),
+                "input_source": str(self.params.get("input_source", "generator")),
             },
             "wavelet": {
                 "plugin_id": str(self.params.get("wavelet_plugin_id")),
                 "params": dict(self.params.get("wavelet_params", {})),
+            },
+            "serial": {
+                "port": str(self.params.get("serial_port", "")),
+                "baudrate": int(self.params.get("serial_baudrate", 310680)),
+                "bytesize": int(self.params.get("serial_bytesize", 8)),
+                "parity": str(self.params.get("serial_parity", "N")),
+                "stopbits": float(self.params.get("serial_stopbits", 1.0)),
+                "timeout": float(self.params.get("serial_timeout", 0.01)),
+                "format": str(self.params.get("serial_format", "int16_le")),
+                "scale": float(self.params.get("serial_scale", 1.0)),
             },
             "components": self.engine.snapshot_components(),
         }
@@ -1133,6 +1323,20 @@ class MainWindow(QMainWindow):
         self.spin_chunk.setValue(int(g.get("chunk_size", 256)))
         self.spin_window.setValue(float(g.get("view_window_sec", 4.0)))
         self.spin_sfps.setValue(int(g.get("scalogram_fps", 8)))
+        self.params.set("input_source", str(g.get("input_source", "generator")))
+        self.combo_input_source.setCurrentIndex(0 if self.params.get("input_source") == "generator" else 1)
+
+        s = data.get("serial", {})
+        self.params.set("serial_port", str(s.get("port", self.params.get("serial_port", ""))))
+        self.params.set("serial_baudrate", int(s.get("baudrate", self.params.get("serial_baudrate", 310680))))
+        self.params.set("serial_bytesize", int(s.get("bytesize", self.params.get("serial_bytesize", 8))))
+        self.params.set("serial_parity", str(s.get("parity", self.params.get("serial_parity", "N"))))
+        self.params.set("serial_stopbits", float(s.get("stopbits", self.params.get("serial_stopbits", 1.0))))
+        self.params.set("serial_timeout", float(s.get("timeout", self.params.get("serial_timeout", 0.01))))
+        self.params.set("serial_format", str(s.get("format", self.params.get("serial_format", "int16_le"))))
+        self.params.set("serial_scale", float(s.get("scale", self.params.get("serial_scale", 1.0))))
+        self._fill_serial_ports()
+        self._sync_serial_controls_from_params()
 
         w = data.get("wavelet", {})
         # На случай старых пресетов: удалить устаревшие ключи режима совместимости (scales)
@@ -1225,5 +1429,4 @@ class MainWindow(QMainWindow):
             self.statusbar.showMessage("Скейлограмма сохранена (PNG)", 2000)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Экспорт не выполнен:\n{e}")
-
 
