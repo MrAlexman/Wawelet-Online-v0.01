@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
             "input_source": "generator",
             "paused": True,
             "serial_port": "",
-            "serial_baudrate": 310680,
+            "serial_baudrate": 310680.0,
             "serial_bytesize": 8,
             "serial_parity": "N",
             "serial_stopbits": 1.0,
@@ -443,9 +443,11 @@ class MainWindow(QMainWindow):
         self.combo_serial_port = QComboBox()
         self.combo_serial_port.setEditable(True)
         self.btn_serial_refresh = QPushButton("Обновить")
-        self.spin_serial_baud = QSpinBox()
-        self.spin_serial_baud.setRange(1, 5_000_000)
-        self.spin_serial_baud.setValue(int(self.params.get("serial_baudrate", 310680)))
+        self.spin_serial_baud = QDoubleSpinBox()
+        self.spin_serial_baud.setRange(1.0, 5_000_000.0)
+        self.spin_serial_baud.setDecimals(6)
+        self.spin_serial_baud.setSingleStep(1.0)
+        self.spin_serial_baud.setValue(float(self.params.get("serial_baudrate", 310680.0)))
         ser1.addWidget(QLabel("Порт"))
         ser1.addWidget(self.combo_serial_port, 1)
         ser1.addWidget(self.btn_serial_refresh)
@@ -733,7 +735,7 @@ class MainWindow(QMainWindow):
         sb = float(self.params.get("serial_stopbits", 1.0))
         fmt = str(self.params.get("serial_format", "int16_le"))
 
-        self.spin_serial_baud.setValue(int(self.params.get("serial_baudrate", 310680)))
+        self.spin_serial_baud.setValue(float(self.params.get("serial_baudrate", 310680.0)))
         self.spin_serial_timeout.setValue(float(self.params.get("serial_timeout", 0.01)))
         self.spin_serial_scale.setValue(float(self.params.get("serial_scale", 1.0)))
 
@@ -758,7 +760,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def on_serial_settings_changed(self, *_):
         self.params.set("serial_port", str(self.combo_serial_port.currentText()).strip())
-        self.params.set("serial_baudrate", int(self.spin_serial_baud.value()))
+        self.params.set("serial_baudrate", float(self.spin_serial_baud.value()))
         self.params.set("serial_bytesize", int(self.combo_serial_bytesize.currentData()))
         self.params.set("serial_parity", str(self.combo_serial_parity.currentData()))
         self.params.set("serial_stopbits", float(self.combo_serial_stopbits.currentData()))
@@ -1306,7 +1308,7 @@ class MainWindow(QMainWindow):
             },
             "serial": {
                 "port": str(self.params.get("serial_port", "")),
-                "baudrate": int(self.params.get("serial_baudrate", 310680)),
+                "baudrate": float(self.params.get("serial_baudrate", 310680.0)),
                 "bytesize": int(self.params.get("serial_bytesize", 8)),
                 "parity": str(self.params.get("serial_parity", "N")),
                 "stopbits": float(self.params.get("serial_stopbits", 1.0)),
@@ -1328,7 +1330,7 @@ class MainWindow(QMainWindow):
 
         s = data.get("serial", {})
         self.params.set("serial_port", str(s.get("port", self.params.get("serial_port", ""))))
-        self.params.set("serial_baudrate", int(s.get("baudrate", self.params.get("serial_baudrate", 310680))))
+        self.params.set("serial_baudrate", float(s.get("baudrate", self.params.get("serial_baudrate", 310680.0))))
         self.params.set("serial_bytesize", int(s.get("bytesize", self.params.get("serial_bytesize", 8))))
         self.params.set("serial_parity", str(s.get("parity", self.params.get("serial_parity", "N"))))
         self.params.set("serial_stopbits", float(s.get("stopbits", self.params.get("serial_stopbits", 1.0))))

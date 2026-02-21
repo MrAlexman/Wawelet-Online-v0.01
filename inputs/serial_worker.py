@@ -21,7 +21,7 @@ class SerialWorker(QObject):
         self._running = False
         self._ser: serial.Serial | None = None
         self._cfg_sig: tuple[Any, ...] | None = None
-        self._raw = bytearray()
+        self._tail = b""
         self._sample_index = 0
 
     @staticmethod
@@ -31,7 +31,7 @@ class SerialWorker(QObject):
     def _cfg_from_snapshot(self, snap: dict[str, Any]) -> tuple[Any, ...]:
         return (
             str(snap.get("serial_port", "")).strip(),
-            int(snap.get("serial_baudrate", 310680)),
+            float(snap.get("serial_baudrate", 310680.0)),
             int(snap.get("serial_bytesize", 8)),
             str(snap.get("serial_parity", "N")),
             float(snap.get("serial_stopbits", 1.0)),
@@ -44,7 +44,8 @@ class SerialWorker(QObject):
 
         self._close_serial()
 
-        port, baudrate, bytesize, parity, stopbits, timeout = cfg
+        port, baudrate_f, bytesize, parity, stopbits, timeout = cfg
+        baudrate = int(round(float(baudrate_f)))
         if not port:
             self.status.emit("Serial: порт не выбран")
             self._cfg_sig = cfg
@@ -60,7 +61,8 @@ class SerialWorker(QObject):
                 timeout=timeout,
             )
             self._cfg_sig = cfg
-            self._raw.clear()
+            self._tail = b""
+            self._sample_index = 0
             self.status.emit(f"Serial: открыт {port} @ {baudrate}")
             return True
         except Exception as e:
@@ -108,30 +110,31 @@ class SerialWorker(QObject):
                 assert self._ser is not None
                 waiting = self._ser.in_waiting
                 raw = self._ser.read(waiting if waiting > 0 else read_size)
-                if not raw:
+                if not raw and not self._tail:
                     continue
 
-                self._raw.extend(raw)
-                ready = (len(self._raw) // bytes_per_sample) * bytes_per_sample
+                buf = self._tail + raw
+                ready = (len(buf) // bytes_per_sample) * bytes_per_sample
                 if ready < chunk_size * bytes_per_sample:
+                    self._tail = buf
                     continue
 
-                payload = memoryview(self._raw)[:ready]
+                payload = buf[:ready]
+                self._tail = buf[ready:]
+
                 if fmt == "int16_le":
                     data_i16 = np.frombuffer(payload, dtype="<i2")
-                    x = data_i16.astype(np.float32)
+                    x = data_i16.astype(np.float32, copy=False)
                 else:
                     data_i16 = np.frombuffer(payload, dtype="<i2")
-                    x = data_i16.astype(np.float32)
+                    x = data_i16.astype(np.float32, copy=False)
 
                 if scale != 1.0:
-                    x *= scale
+                    x = x * scale
 
                 t0 = self._sample_index / fs
                 self._sample_index += int(x.size)
                 self.chunk_ready.emit(x, t0, fs)
-
-                del self._raw[:ready]
             except Exception as e:
                 self.status.emit(f"Serial read error: {e}")
                 self._close_serial()
